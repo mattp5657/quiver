@@ -1,4 +1,4 @@
-use query_engine::query_parser::QueryParser;
+use quiver::sql::parser::QueryParser;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 

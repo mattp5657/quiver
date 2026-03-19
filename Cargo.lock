@@ -80,7 +80,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "query-engine"
+name = "quiver"
 version = "0.1.0"
 dependencies = [
  "sqlparser",

@@ -1,2 +1,2 @@
 pub mod logical_plan;
-pub mod query_parser;
+pub mod sql;
