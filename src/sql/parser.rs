@@ -1,5 +1,10 @@
 use crate::logical_plan::LogicalPlan;
-use sqlparser::ast::Expr;
+use crate::logical_plan::expr::Expr;
+use crate::shared::Value;
+use crate::shared::BinaryOp;
+use sqlparser::ast::Expr as SqlExpr;
+use sqlparser::ast::Value as SqlValue;
+use sqlparser::ast::BinaryOperator;
 use sqlparser::ast::Query;
 use sqlparser::ast::Select;
 use sqlparser::ast::SelectItem;
@@ -44,12 +49,18 @@ impl QueryParser {
 
         let scan = LogicalPlan::Scan { table_name };
 
-        let projection = LogicalPlan::Projection {
-            columns,
-            child: Box::new(scan),
+        let plan = match &select.selection {
+            Some(expr) => LogicalPlan::Filter {
+                predicate: self.extract_filter(expr)?,
+                child: Box::new(scan)
+            },
+            None => scan
         };
 
-        Ok(projection)
+        Ok(LogicalPlan::Projection {
+            columns,
+            child: Box::new(plan)
+        })
     }
 
     fn extract_table_name(&self, select: &Select) -> Result<String, Box<dyn std::error::Error>> {
@@ -64,7 +75,7 @@ impl QueryParser {
 
         for item in &select.projection {
             match item {
-                SelectItem::UnnamedExpr(Expr::Identifier(ident)) => {
+                SelectItem::UnnamedExpr(SqlExpr::Identifier(ident)) => {
                     columns.push(ident.value.clone());
                 }
                 SelectItem::Wildcard(_) => {
@@ -75,5 +86,51 @@ impl QueryParser {
         }
 
         Ok(columns)
+    }
+
+    fn extract_filter(&self, expr: &SqlExpr) -> Result<Expr, Box<dyn std::error::Error>> {
+        match expr {
+            SqlExpr::BinaryOp { left, op, right } => {
+                let left_expr = self.extract_filter(left)?;
+                let right_expr = self.extract_filter(right)?;
+                let binary_op = self.extract_op(op)?;
+                
+                Ok(Expr::BinaryExpr {
+                    left: Box::new(left_expr),
+                    op: binary_op,
+                    right: Box::new(right_expr)
+                })
+            }
+            SqlExpr::Identifier(ident) => {
+                Ok(Expr::Column(ident.value.clone()))
+            }
+            SqlExpr::Value(v) => {
+                Ok(Expr::Literal(self.extract_value(&v.value)?))
+            }
+            _ => Err("unsupported expression".into())
+        }
+    }
+
+    fn extract_op(&self, op: &BinaryOperator) -> Result<BinaryOp, Box<dyn std::error::Error>> {
+        match op {
+            BinaryOperator::Eq => Ok(BinaryOp::Eq),
+            BinaryOperator::NotEq => Ok(BinaryOp::NotEq),
+            BinaryOperator::Gt => Ok(BinaryOp::Gt),
+            BinaryOperator::GtEq => Ok(BinaryOp::GtEq),
+            BinaryOperator::Lt => Ok(BinaryOp::Lt),
+            BinaryOperator::LtEq => Ok(BinaryOp::LtEq),
+            BinaryOperator::And => Ok(BinaryOp::And),
+            BinaryOperator::Or => Ok(BinaryOp::Or),
+            _ => Err("unsupported operator".into())
+        }
+    }
+
+    fn extract_value(&self, val: &SqlValue) -> Result<Value, Box<dyn std::error::Error>> {
+        match val {
+            SqlValue::Number(n, _) => Ok(Value::Int64(n.parse::<i64>()?)),
+            SqlValue::SingleQuotedString(s) => Ok(Value::Utf8(s.clone())),
+            SqlValue::Boolean(b) => Ok(Value::Boolean(*b)),
+            _ => Err("unsupported value".into())
+        }
     }
 }

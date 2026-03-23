@@ -3,7 +3,7 @@ use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let sql = "SELECT A, B from employees";
+    let sql = "SELECT A, B from employees where A > B and B < A";
 
     let dialect = GenericDialect {};
     let statements = Parser::parse_sql(&dialect, sql)?;

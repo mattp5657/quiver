@@ -1,3 +1,5 @@
+use crate::logical_plan::Expr;
+
 #[derive(Debug)]
 pub enum LogicalPlan {
     Scan {
@@ -6,5 +8,9 @@ pub enum LogicalPlan {
     Projection {
         columns: Vec<String>,
         child: Box<LogicalPlan>,
+    },
+    Filter{
+        predicate: Expr,
+        child: Box<LogicalPlan>
     },
 }
