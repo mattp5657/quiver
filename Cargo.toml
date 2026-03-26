@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+arrow = { version = "58.1.0", features = ["csv"] }
+parquet = { version = "58.1.0", features = ["arrow"] }
 sqlparser = "0.61.0"

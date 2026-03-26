@@ -1,6 +1,9 @@
 use quiver::sql::parser::QueryParser;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
+use quiver::physical_plan::scan::CsvScanExec;
+use quiver::physical_plan::PhysicalOperator;
+
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sql = "SELECT A, B from employees where A > B and B < A";
@@ -13,6 +16,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plan = parser.to_logical_plan(statements)?;
 
     println!("{:#?}", plan);
+
+    let mut csv_scan = CsvScanExec::new("silver_prices_historical.csv", 1024)?;
+
+    while let Some(batch) = csv_scan.execute() {
+        let batch = batch?;
+        println!("{:?}", batch);
+    }
 
     // match statement {
     //     Statement::Query(query) => {
