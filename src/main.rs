@@ -1,7 +1,7 @@
 use quiver::sql::parser::QueryParser;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-use quiver::physical_plan::scan::CsvScanExec;
+use quiver::physical_plan::scan::ParquetScanExec;
 use quiver::physical_plan::PhysicalOperator;
 
 
@@ -17,9 +17,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("{:#?}", plan);
 
-    let mut csv_scan = CsvScanExec::new("silver_prices_historical.csv", 1024)?;
+    let mut parquet_scan = ParquetScanExec::new("tests/data/data.parquet", 1024)?;
 
-    while let Some(batch) = csv_scan.execute() {
+    while let Some(batch) = parquet_scan.execute() {
         let batch = batch?;
         println!("{:?}", batch);
     }

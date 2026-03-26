@@ -1,7 +1,7 @@
 use crate::shared::values::Value;
 use crate::shared::operators::BinaryOp;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Expr {
     Column(String),
     

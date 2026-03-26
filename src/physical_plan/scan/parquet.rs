@@ -33,3 +33,34 @@ impl PhysicalOperator for ParquetScanExec {
         self.reader.next().map(|r| r.map_err(|e| e.into()))
     }
 }
+
+
+mod tests {
+    use super::*;
+
+    // Verifies that ParquetScanExec reads batches from a real parquet file.
+    // Asserts the schema is correct and at least one batch is returned with the expected columns.
+    #[test]
+    fn test_parquet_scan_reads_batches() {
+        let mut scan = ParquetScanExec::new("tests/data/data.parquet", 1024).unwrap();
+
+        let batch = scan.execute().unwrap().unwrap();
+
+        assert_eq!(batch.num_columns(), 13);
+        assert_eq!(batch.schema().field(0).name(), "Date");
+        assert_eq!(batch.schema().field(1).name(), "Adj Close");
+        assert_eq!(batch.schema().field(6).name(), "Volume");
+    }
+
+    // Verifies that execute() returns None after all batches are exhausted.
+    #[test]
+    fn test_parquet_scan_exhausts() {
+        let mut scan = ParquetScanExec::new("tests/data/data.parquet", 10_000).unwrap();
+
+        let first = scan.execute();
+        assert!(first.is_some());
+
+        let second = scan.execute();
+        assert!(second.is_none());
+    }
+}

@@ -1,6 +1,6 @@
 use crate::logical_plan::Expr;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum LogicalPlan {
     Scan {
         table_name: String,

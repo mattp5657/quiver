@@ -134,3 +134,81 @@ impl QueryParser {
         }
     }
 }
+
+mod tests {
+    use super::*;
+    use sqlparser::dialect::GenericDialect;
+    use sqlparser::parser::Parser;
+
+    fn parse(sql: &str) -> LogicalPlan {
+        let stmts = Parser::parse_sql(&GenericDialect {}, sql).unwrap();
+        QueryParser::new().to_logical_plan(stmts).unwrap()
+    }
+    
+    // Verifies that SELECT * produces a Projection at the root wrapping a Scan.
+    // Expected plan: Projection(columns=["*"]) -> Scan(table="employees")
+    // No Filter node should be present — the query has no WHERE clause.
+    #[test]
+    fn test_select_star() {
+        let plan = parse("SELECT * FROM employees");
+        assert_eq!(
+            plan,
+            LogicalPlan::Projection {
+                columns: vec!["*".to_string()],
+                child: Box::new(LogicalPlan::Scan {
+                    table_name: "employees".to_string(),
+                }),
+            }
+        );
+    }
+
+    // Verifies that named columns are extracted into the Projection column list.
+    // Expected plan: Projection(columns=["a", "b"]) -> Scan(table="employees")
+    // No Filter node should be present — the query has no WHERE clause.
+    #[test]
+    fn test_select_named_columns() {
+        let plan = parse("SELECT a, b FROM employees");
+        assert_eq!(
+            plan,
+            LogicalPlan::Projection {
+                columns: vec!["a".to_string(), "b".to_string()],
+                child: Box::new(LogicalPlan::Scan {
+                    table_name: "employees".to_string(),
+                }),
+            }
+        );
+    }
+
+    // Verifies that a WHERE clause produces a Filter node between Projection and Scan.
+    // Expected plan: Projection(columns=["a"]) -> Filter(a > 5) -> Scan(table="employees")
+    // The predicate is a BinaryExpr with a Column reference on the left and an Int64 literal on the right.
+    #[test]
+    fn test_select_with_filter() {
+        let plan = parse("SELECT a FROM employees WHERE a > 5");
+        assert_eq!(
+            plan,
+            LogicalPlan::Projection {
+                columns: vec!["a".to_string()],
+                child: Box::new(LogicalPlan::Filter {
+                    predicate: Expr::BinaryExpr {
+                        left: Box::new(Expr::Column("a".to_string())),
+                        op: BinaryOp::Gt,
+                        right: Box::new(Expr::Literal(Value::Int64(5))),
+                    },
+                    child: Box::new(LogicalPlan::Scan {
+                        table_name: "employees".to_string(),
+                    }),
+                }),
+            }
+        );
+    }
+
+    // Verifies that unsupported SQL statements return an error rather than panic.
+    // INSERT is not a query — the planner should reject it gracefully at the statement match.
+    #[test]
+    fn test_unsupported_statement_returns_err() {
+        let stmts = Parser::parse_sql(&GenericDialect {}, "INSERT INTO foo VALUES (1)").unwrap();
+        let result = QueryParser::new().to_logical_plan(stmts);
+        assert!(result.is_err());
+    }
+}
