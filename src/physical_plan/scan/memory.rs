@@ -5,30 +5,43 @@ use crate::physical_plan::PhysicalOperator;
 pub struct MemoryScanExec {
     data: RecordBatch,
     exhausted: bool,
+    pub parent: Box<dyn PhysicalOperator>,
 }
 
 impl MemoryScanExec {
-    pub fn new(data: RecordBatch) -> Self {
-        MemoryScanExec { data, exhausted: false }
+    pub fn new(data: RecordBatch, parent: Box<dyn PhysicalOperator>) -> Self {
+        MemoryScanExec { data, exhausted: false, parent }
     }
-}
 
-impl PhysicalOperator for MemoryScanExec {
-    fn execute(&mut self) -> Option<Result<RecordBatch, Box<dyn std::error::Error>>> {
-        if self.exhausted {
-            None  // no more data
-        } else {
+    // Single batch — push it once then mark exhausted.
+    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.exhausted {
             self.exhausted = true;
-            Some(Ok(self.data.clone()))  // return data once
+            let batch = self.data.clone();
+            self.parent.execute(batch)?;
         }
+        Ok(())
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Rc;
+    use std::cell::RefCell;
     use arrow::array::Int32Array;
     use arrow::datatypes::{DataType, Field, Schema};
     use std::sync::Arc;
+
+    // Collects pushed batches for test assertions.
+    struct MockParent(Rc<RefCell<Vec<RecordBatch>>>);
+
+    impl PhysicalOperator for MockParent {
+        fn execute(&mut self, batch: RecordBatch) -> Result<(), Box<dyn std::error::Error>> {
+            self.0.borrow_mut().push(batch);
+            Ok(())
+        }
+    }
 
     fn make_batch() -> RecordBatch {
         let schema = Arc::new(Schema::new(vec![
@@ -38,24 +51,28 @@ mod tests {
         RecordBatch::try_new(schema, vec![array]).unwrap()
     }
 
-    // Verifies that the first execute() call returns the batch passed at construction.
+    // Verifies run() pushes exactly one batch to the parent.
     #[test]
-    fn test_memory_scan_returns_batch() {
-        let batch = make_batch();
-        let mut scan = MemoryScanExec::new(batch.clone());
-
-        let result = scan.execute().unwrap().unwrap();
-        assert_eq!(result.num_rows(), 3);
-        assert_eq!(result.num_columns(), 1);
-        assert_eq!(result.schema().field(0).name(), "a");
+    fn test_memory_scan_pushes_batch() {
+        let collected = Rc::new(RefCell::new(vec![]));
+        let mock = Box::new(MockParent(Rc::clone(&collected)));
+        let mut scan = MemoryScanExec::new(make_batch(), mock);
+        scan.run().unwrap();
+        let batches = collected.borrow();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 3);
+        assert_eq!(batches[0].num_columns(), 1);
+        assert_eq!(batches[0].schema().field(0).name(), "a");
     }
 
-    // Verifies that execute() returns None on the second call — the scan is single-pass.
+    // Verifies run() is a no-op after the scan is exhausted.
     #[test]
     fn test_memory_scan_exhausts() {
-        let mut scan = MemoryScanExec::new(make_batch());
-
-        let _ = scan.execute();
-        assert!(scan.execute().is_none());
+        let collected = Rc::new(RefCell::new(vec![]));
+        let mock = Box::new(MockParent(Rc::clone(&collected)));
+        let mut scan = MemoryScanExec::new(make_batch(), mock);
+        scan.run().unwrap();
+        scan.run().unwrap();
+        assert_eq!(collected.borrow().len(), 1);
     }
 }

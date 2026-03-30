@@ -14,32 +14,30 @@ pub const FILTER_MASK_COLUMN: &str = "__filter_mask__";
 
 pub struct FilterExec {
     predicate: Expr,
-    child: Box<dyn PhysicalOperator>,
+    parent: Box<dyn PhysicalOperator>,
 }
 
 impl FilterExec {
-    pub fn new(predicate: Expr, child: Box<dyn PhysicalOperator>) -> Self {
-        FilterExec { predicate, child }
+    pub fn new(predicate: Expr, parent: Box<dyn PhysicalOperator>) -> Self {
+        FilterExec { predicate, parent }
     }
 }
 
 impl PhysicalOperator for FilterExec {
-    fn execute(&mut self) -> Option<Result<RecordBatch, Box<dyn std::error::Error>>> {
-        let batch = self.child.execute()?;
+    fn execute(&mut self, batch: RecordBatch) -> Result<(), Box<dyn std::error::Error>> {
+        let mask = eval_predicate(&self.predicate, &batch)?;
 
-        Some(batch.and_then(|batch| {
-            let mask = eval_predicate(&self.predicate, &batch)?;
+        // Append mask as a sentinel column
+        let mut fields: Vec<Field> = batch.schema().fields().iter().map(|f| f.as_ref().clone()).collect();
+        fields.push(Field::new(FILTER_MASK_COLUMN, DataType::Boolean, false));
 
-            // append mask as a sentinel column
-            let mut fields: Vec<Field> = batch.schema().fields().iter().map(|f| f.as_ref().clone()).collect();
-            fields.push(Field::new(FILTER_MASK_COLUMN, DataType::Boolean, false));
+        let mut columns: Vec<ArrayRef> = batch.columns().to_vec();
+        columns.push(Arc::new(mask));
 
-            let mut columns: Vec<ArrayRef> = batch.columns().to_vec();
-            columns.push(Arc::new(mask));
+        let schema = Arc::new(Schema::new(fields));
+        let masked_batch = RecordBatch::try_new(schema, columns)?;
 
-            let schema = Arc::new(Schema::new(fields));
-            Ok(RecordBatch::try_new(schema, columns)?)
-        }))
+        self.parent.execute(masked_batch)
     }
 }
 
@@ -107,12 +105,23 @@ fn eval_comparison(op: &BinaryOp, left: &ArrayRef, right: &ArrayRef) -> Result<B
 mod tests {
     use super::*;
     use crate::logical_plan::expr::Expr;
-    use crate::physical_plan::scan::memory::MemoryScanExec;
     use crate::shared::operators::BinaryOp;
     use crate::shared::values::Value;
-    use arrow::array::{BooleanArray, Int32Array};
+    use arrow::array::BooleanArray;
     use arrow::datatypes::{DataType, Field, Schema};
+    use std::rc::Rc;
+    use std::cell::RefCell;
     use std::sync::Arc;
+
+    // Collects pushed batches for test assertions.
+    struct MockParent(Rc<RefCell<Vec<RecordBatch>>>);
+
+    impl PhysicalOperator for MockParent {
+        fn execute(&mut self, batch: RecordBatch) -> Result<(), Box<dyn std::error::Error>> {
+            self.0.borrow_mut().push(batch);
+            Ok(())
+        }
+    }
 
     fn make_batch() -> RecordBatch {
         let schema = Arc::new(Schema::new(vec![
@@ -122,8 +131,8 @@ mod tests {
         RecordBatch::try_new(schema, vec![array]).unwrap()
     }
 
-    // Verifies that FilterExec appends a __filter_mask__ boolean column to the batch.
-    // The mask should reflect which rows satisfy the predicate a > 4.
+    // Verifies that FilterExec appends a __filter_mask__ boolean column to the batch
+    // and pushes it to the parent. The mask should reflect which rows satisfy a > 4.
     #[test]
     fn test_filter_appends_mask_column() {
         let predicate = Expr::BinaryExpr {
@@ -132,12 +141,16 @@ mod tests {
             right: Box::new(Expr::Literal(Value::Int64(4))),
         };
 
-        let scan = Box::new(MemoryScanExec::new(make_batch()));
-        let mut filter = FilterExec::new(predicate, scan);
+        let collected = Rc::new(RefCell::new(vec![]));
+        let mock = Box::new(MockParent(Rc::clone(&collected)));
+        let mut filter = FilterExec::new(predicate, mock);
 
-        let batch = filter.execute().unwrap().unwrap();
+        filter.execute(make_batch()).unwrap();
 
-        // mask column should be appended
+        let batches = collected.borrow();
+        assert_eq!(batches.len(), 1);
+
+        let batch = &batches[0];
         let mask_idx = batch.schema().index_of(FILTER_MASK_COLUMN).unwrap();
         let mask = batch.column(mask_idx).as_any().downcast_ref::<BooleanArray>().unwrap();
 
@@ -149,19 +162,22 @@ mod tests {
         assert_eq!(mask.value(4), true);
     }
 
-        // Verifies that FilterExec returns None once the child scan is exhausted.
+    // Verifies that multiple batches can be pushed through the filter.
     #[test]
-    fn test_filter_exhausts_with_child() {
+    fn test_filter_pushes_multiple_batches() {
         let predicate = Expr::BinaryExpr {
             left: Box::new(Expr::Column("a".to_string())),
             op: BinaryOp::Gt,
             right: Box::new(Expr::Literal(Value::Int64(0))),
         };
 
-        let scan = Box::new(MemoryScanExec::new(make_batch()));
-        let mut filter = FilterExec::new(predicate, scan);
+        let collected = Rc::new(RefCell::new(vec![]));
+        let mock = Box::new(MockParent(Rc::clone(&collected)));
+        let mut filter = FilterExec::new(predicate, mock);
 
-        let _ = filter.execute();
-        assert!(filter.execute().is_none());
+        filter.execute(make_batch()).unwrap();
+        filter.execute(make_batch()).unwrap();
+
+        assert_eq!(collected.borrow().len(), 2);
     }
 }

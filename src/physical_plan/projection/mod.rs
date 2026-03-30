@@ -19,10 +19,10 @@ pub enum ProjectionExec {
 }
 
 impl PhysicalOperator for ProjectionExec {
-    fn execute(&mut self) -> Option<Result<RecordBatch, Box<dyn std::error::Error>>> {
+    fn execute(&mut self, batch: RecordBatch) -> Result<(), Box<dyn std::error::Error>>{
         match self {
-            ProjectionExec::Intermediate(p) => p.execute(),
-            ProjectionExec::Output(p) => p.execute(),
+            ProjectionExec::Intermediate(p) => p.execute(batch),
+            ProjectionExec::Output(p) => p.execute(batch),
         }
     }
 }

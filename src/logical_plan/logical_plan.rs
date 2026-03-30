@@ -4,13 +4,14 @@ use crate::logical_plan::Expr;
 pub enum LogicalPlan {
     Scan {
         table_name: String,
+        parent: Box<LogicalPlan>,
     },
     Projection {
         columns: Vec<String>,
-        child: Box<LogicalPlan>,
+        parent: Option<Box<LogicalPlan>>,
     },
     Filter{
         predicate: Expr,
-        child: Box<LogicalPlan>
+        parent: Box<LogicalPlan>,
     },
 }

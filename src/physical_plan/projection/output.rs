@@ -5,25 +5,24 @@ use super::{apply_mask, project_columns};
 
 pub struct OutputProjectionExec {
     pub columns: Vec<String>,
-    pub child: Box<dyn PhysicalOperator>,
+    pub results: Vec<RecordBatch>,
 }
 
 impl OutputProjectionExec {
-    pub fn new(columns: Vec<String>, child: Box<dyn PhysicalOperator>) -> Self {
-        Self { columns, child }
+    pub fn new(columns: Vec<String>) -> Self {
+        Self { columns, results: vec![] }
     }
 }
 
 impl PhysicalOperator for OutputProjectionExec {
-    fn execute(&mut self) -> Option<Result<RecordBatch, Box<dyn std::error::Error>>> {
-        let result = self.child.execute()?;
-        Some(result.and_then(|batch| {
-            let batch = apply_mask(batch)?;
-            let batch = project_columns(batch, &self.columns)?;
+    fn execute(&mut self, batch: RecordBatch) -> Result<(), Box<dyn std::error::Error>> {
+        let batch = apply_mask(batch)?;
+        let batch = project_columns(batch, &self.columns)?;
+        println!("{:#?}", batch);
 
-            // TODO: cache with compression — CPU cycles acceptable here
+        // TODO: cache with compression — CPU cycles acceptable here
 
-            Ok(batch)
-        }))
+        self.results.push(batch);
+        Ok(())
     }
 }

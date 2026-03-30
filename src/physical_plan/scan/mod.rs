@@ -15,12 +15,12 @@ pub enum ScanExec {
     Csv(CsvScanExec),
 }
 
-impl PhysicalOperator for ScanExec {
-    fn execute(&mut self) ->  Option<Result<RecordBatch, Box<dyn std::error::Error>>>  {
+impl ScanExec {
+    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match self {
-            ScanExec::Memory(s) => s.execute(),
-            ScanExec::Parquet(s) => s.execute(),
-            ScanExec::Csv(s) => s.execute(),
+            ScanExec::Memory(s) => s.run(),
+            ScanExec::Parquet(s) => s.run(),
+            ScanExec::Csv(s) => s.run(),
         }
     }
 }

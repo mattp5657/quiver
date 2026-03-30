@@ -5,7 +5,7 @@ use sqlparser::parser::Parser;
 
 use quiver::logical_plan::LogicalPlan;
 use quiver::physical_plan::filter::FilterExec;
-use quiver::physical_plan::projection::{OutputProjectionExec, ProjectionExec};
+use quiver::physical_plan::projection::{OutputProjectionExec, ProjectionExec, IntermediateProjectionExec};
 use quiver::physical_plan::scan::{ParquetScanExec, ScanExec};
 use quiver::physical_plan::PhysicalOperator;
 use quiver::sql::parser::QueryParser;
@@ -20,37 +20,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut catalog = HashMap::new();
     catalog.insert("data".to_string(), "tests/data/data.parquet".to_string());
 
-    let mut exec = plan_to_exec(logical_plan, &catalog)?;
+    let mut scan = plan_to_scan(logical_plan, &catalog)?;
+    scan.run()?;
 
-    while let Some(result) = exec.execute() {
-        let batch = result?;
-        println!("{:#?}", batch);
-    }
+    // TODO: access results from OutputProjectionExec
 
     Ok(())
 }
 
-fn plan_to_exec(
+fn plan_to_scan(
     plan: LogicalPlan,
     catalog: &HashMap<String, String>,
-) -> Result<Box<dyn PhysicalOperator>, Box<dyn std::error::Error>> {
+) -> Result<ScanExec, Box<dyn std::error::Error>> {
     match plan {
-        LogicalPlan::Scan { table_name } => {
+        LogicalPlan::Scan { table_name, parent } => {
             let path = catalog
                 .get(&table_name)
                 .ok_or(format!("table '{}' not in catalog", table_name))?;
-            Ok(Box::new(ScanExec::Parquet(ParquetScanExec::new(path, 1024)?)))
+            let parent_exec = plan_node_to_exec(*parent)?;
+            Ok(ScanExec::Parquet(ParquetScanExec::new(path, 1024, parent_exec)?))
         }
-        LogicalPlan::Filter { predicate, child } => {
-            let child_exec = plan_to_exec(*child, catalog)?;
-            Ok(Box::new(FilterExec::new(predicate, child_exec)))
+        _ => Err("expected Scan at root of logical plan".into()),
+    }
+}
+
+fn plan_node_to_exec(
+    plan: LogicalPlan,
+) -> Result<Box<dyn PhysicalOperator>, Box<dyn std::error::Error>> {
+    match plan {
+        LogicalPlan::Filter { predicate, parent } => {
+            let parent_exec = plan_node_to_exec(*parent)?;
+            Ok(Box::new(FilterExec::new(predicate, parent_exec)))
         }
-        LogicalPlan::Projection { columns, child } => {
-            let child_exec = plan_to_exec(*child, catalog)?;
-            Ok(Box::new(ProjectionExec::Output(OutputProjectionExec::new(
-                columns,
-                child_exec,
-            ))))
+        LogicalPlan::Projection { columns, parent } => {
+            match parent {
+                Some(p) => {
+                    let parent_exec = plan_node_to_exec(*p)?;
+                    Ok(Box::new(ProjectionExec::Intermediate(
+                        IntermediateProjectionExec::new(columns, parent_exec),
+                    )))
+                }
+                None => {
+                    Ok(Box::new(ProjectionExec::Output(
+                        OutputProjectionExec::new(columns),
+                    )))
+                }
+            }
         }
+        _ => Err("unexpected Scan node in middle of plan".into()),
     }
 }
